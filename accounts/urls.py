@@ -10,6 +10,7 @@ from .views import (
     CourseView,
     HomeView,
     InstructorAssignmentCreateAPIView,
+    InstructorAssignmentSubmissionAPIView,
     InstructorCourseAllocationView,
     InstructorCoursesAPIView,
     InstructorCoursesView,
@@ -18,6 +19,7 @@ from .views import (
     InstructorView,
     LoginView,
     RegisterView,
+    StudentAssignmentSubmissionAPIView,
     StudentListView,
     StudentLoginView,
     StudentRegisterView,
@@ -67,5 +69,15 @@ urlpatterns = [
         "instructor/assignments/<int:pk>/",
         InstructorAssignmentCreateAPIView.as_view(),
         name="instructor-assignment-detail",
+    ),
+    path(
+        "student/assignments/submissions/",
+        StudentAssignmentSubmissionAPIView.as_view(),
+        name="student-assignment-submissions",
+    ),
+    path(
+        "instructor/assignments/submissions/",
+        InstructorAssignmentSubmissionAPIView.as_view(),
+        name="instructor-assignment-submissions",
     ),
 ]

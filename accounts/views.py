@@ -10,11 +10,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Accounts, Assignment, Category, Course, Instructor, InstructorCourseAllocation
-from .permissions import IsAdminOrReadOnly, IsInstructor
+from .models import (
+    Accounts,
+    Assignment,
+    AssignmentSubmission,
+    Category,
+    Course,
+    Instructor,
+    InstructorCourseAllocation,
+)
+from .permissions import IsAdminOrReadOnly, IsInstructor, IsStudent
 from .serializers import (
     AdminProfileSerializer,
     AssignmentSerializer,
+    AssignmentSubmissionSerializer,
     CategorySerializer,
     CourseSerializer,
     InstructorCourseAllocationSerializer,
@@ -828,5 +837,116 @@ class InstructorAssignmentCreateAPIView(APIView):
 
         return Response(
             {"message": "Assignment deleted successfully"},
+            status=status.HTTP_200_OK,
+        )
+
+
+class StudentAssignmentSubmissionAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get_queryset(self, student):
+        return AssignmentSubmission.objects.filter(
+            student=student,
+        ).select_related(
+            "assignment",
+            "assignment__course",
+            "assignment__instructor",
+            "student",
+        )
+
+    def get(self, request):
+        submissions = self.get_queryset(request.user)
+        serializer = AssignmentSubmissionSerializer(submissions, many=True)
+        return Response(
+            {
+                "message": "Student submissions fetched successfully",
+                "count": submissions.count(),
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        student = request.user
+        assignment_id = request.data.get("assignment")
+
+        if not assignment_id:
+            return Response(
+                {"message": "Assignment is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            assignment = Assignment.objects.select_related(
+                "course",
+                "instructor",
+            ).get(id=assignment_id)
+        except Assignment.DoesNotExist:
+            return Response(
+                {"message": "Assignment Not Found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = AssignmentSubmissionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        defaults = {
+            "status": "submitted",
+        }
+
+        if "submission_file" in serializer.validated_data:
+            defaults["submission_file"] = serializer.validated_data["submission_file"]
+
+        if "submission_text" in serializer.validated_data:
+            defaults["submission_text"] = serializer.validated_data["submission_text"]
+
+        submission, created = AssignmentSubmission.objects.update_or_create(
+            assignment=assignment,
+            student=student,
+            defaults=defaults,
+        )
+
+        response_serializer = AssignmentSubmissionSerializer(submission)
+
+        return Response(
+            {
+                "message": (
+                    "Assignment submitted successfully"
+                    if created
+                    else "Assignment resubmitted successfully"
+                ),
+                "data": response_serializer.data,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class InstructorAssignmentSubmissionAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsInstructor]
+
+    def get(self, request):
+        instructor = request.user.instructor_profile
+        assignment_id = request.query_params.get("assignment")
+
+        submissions = AssignmentSubmission.objects.filter(
+            assignment__instructor=instructor,
+        ).select_related(
+            "assignment",
+            "assignment__course",
+            "assignment__instructor",
+            "student",
+        )
+
+        if assignment_id:
+            submissions = submissions.filter(assignment_id=assignment_id)
+
+        serializer = AssignmentSubmissionSerializer(submissions, many=True)
+        return Response(
+            {
+                "message": "Submitted assignments fetched successfully",
+                "count": submissions.count(),
+                "data": serializer.data,
+            },
             status=status.HTTP_200_OK,
         )

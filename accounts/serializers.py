@@ -9,7 +9,8 @@ from accounts.models import (
     Course,
     Category,
     InstructorCourseAllocation,
-    Assignment
+    Assignment,
+    AssignmentSubmission,
 )
 
 # ✅ Get correct User model (works with custom user model)
@@ -438,4 +439,59 @@ class AssignmentSerializer(serializers.ModelSerializer):
                 'required': False,
                 'allow_null': True
             }
+        }
+
+
+class AssignmentSubmissionSerializer(serializers.ModelSerializer):
+    assignment_details = serializers.SerializerMethodField()
+    student_details = UserSerializer(
+        source="student",
+        read_only=True,
+    )
+
+    class Meta:
+        model = AssignmentSubmission
+        fields = [
+            "id",
+            "assignment",
+            "assignment_details",
+            "student",
+            "student_details",
+            "submission_file",
+            "submission_text",
+            "status",
+            "submitted_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "student",
+            "status",
+            "submitted_at",
+            "updated_at",
+        ]
+
+    def validate(self, data):
+        if not data.get("submission_file") and not data.get("submission_text"):
+            raise serializers.ValidationError(
+                {
+                    "submission": "Provide at least a file or submission text."
+                }
+            )
+
+        return data
+
+    def get_assignment_details(self, obj):
+        return {
+            "id": obj.assignment_id,
+            "title": obj.assignment.title,
+            "course": {
+                "id": obj.assignment.course_id,
+                "course_name": obj.assignment.course.course_name,
+                "course_code": obj.assignment.course.course_code,
+            },
+            "instructor": {
+                "id": obj.assignment.instructor_id,
+                "name": obj.assignment.instructor.name,
+                "instructor_id": obj.assignment.instructor.instructor_id,
+            },
         }
