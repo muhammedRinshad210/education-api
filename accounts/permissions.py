@@ -18,10 +18,9 @@ from rest_framework.permissions import BasePermission
 class IsInstructor(BasePermission):
 
     def has_permission(self, request, view):
-
-        return hasattr(
-            request.user,
-            'instructor_profile'
+        return (
+            request.user.is_authenticated
+            and hasattr(request.user, "instructor_profile")
         )
 
 

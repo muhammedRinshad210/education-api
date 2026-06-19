@@ -140,7 +140,9 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=100),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=100),
 
-    'AUTH_HEADER_TYPES': ('JWT',),
+    # Accept both the project's existing "JWT" prefix and the more common
+    # "Bearer" prefix so API clients don't get unexpected 401s.
+    'AUTH_HEADER_TYPES': ('JWT', 'Bearer'),
 }
 
 
