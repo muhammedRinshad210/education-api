@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.db.models import Q
 from rest_framework import status
+from rest_framework import viewsets
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
@@ -18,8 +19,14 @@ from .models import (
     Course,
     Instructor,
     InstructorCourseAllocation,
+    StudentAssignment,
 )
-from .permissions import IsAdminOrReadOnly, IsInstructor, IsStudent
+from .permissions import (
+    IsAdminOrReadOnly,
+    IsInstructor,
+    IsStudent,
+    IsStudentAssignmentOwnerOrInstructor,
+)
 from .serializers import (
     AdminProfileSerializer,
     AssignmentSerializer,
@@ -31,6 +38,7 @@ from .serializers import (
     InstructorRegisterSerializer,
     InstructorSerializer,
     StudentListSerializer,
+    StudentAssignmentSerializer,
     StudentRegisterSerializer,
 )
 
@@ -948,5 +956,130 @@ class InstructorAssignmentSubmissionAPIView(APIView):
                 "count": submissions.count(),
                 "data": serializer.data,
             },
+            status=status.HTTP_200_OK,
+        )
+
+
+class StudentAssignmentViewSet(viewsets.ModelViewSet):
+    """
+    CRUD endpoint for student assignment submissions.
+
+    GET /student-assignments/
+    GET /student-assignments/{id}/
+    POST /student-assignments/
+    PATCH /student-assignments/{id}/
+    DELETE /student-assignments/{id}/
+    """
+
+    serializer_class = StudentAssignmentSerializer
+    permission_classes = [IsAuthenticated, IsStudentAssignmentOwnerOrInstructor]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        queryset = StudentAssignment.objects.select_related(
+            "assignment",
+            "assignment__course",
+            "assignment__instructor",
+            "student",
+            "instructor",
+        )
+
+        if not user.is_authenticated:
+            return queryset.none()
+
+        if user.is_staff or user.is_superuser:
+            return queryset
+
+        instructor_profile = getattr(user, "instructor_profile", None)
+        if instructor_profile is not None:
+            return queryset.filter(instructor=instructor_profile)
+
+        return queryset.filter(student=user)
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(
+            {
+                "message": "Student assignments fetched successfully",
+                "count": queryset.count(),
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(
+            {
+                "message": "Student assignment fetched successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            {
+                "message": "Student assignment submitted successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(
+            {
+                "message": "Student assignment updated successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=False,
+        )
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(
+            {
+                "message": "Student assignment updated successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.check_object_permissions(request, instance)
+        instance.delete()
+        return Response(
+            {"message": "Student assignment deleted successfully"},
             status=status.HTTP_200_OK,
         )

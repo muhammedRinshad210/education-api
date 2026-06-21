@@ -11,6 +11,8 @@ from accounts.models import (
     InstructorCourseAllocation,
     Assignment,
     AssignmentSubmission,
+    StudentEnrollment,
+    StudentAssignment,
 )
 
 # ✅ Get correct User model (works with custom user model)
@@ -494,4 +496,115 @@ class AssignmentSubmissionSerializer(serializers.ModelSerializer):
                 "name": obj.assignment.instructor.name,
                 "instructor_id": obj.assignment.instructor.instructor_id,
             },
+        }
+
+
+class StudentAssignmentSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the StudentAssignment submission API.
+
+    The client sends assignment_id, name, description, and media_file.
+    The instructor and student ownership are assigned server-side.
+    """
+
+    assignment_id = serializers.PrimaryKeyRelatedField(
+        source="assignment",
+        queryset=Assignment.objects.select_related("course", "instructor"),
+        write_only=True,
+    )
+    assignment = serializers.PrimaryKeyRelatedField(read_only=True)
+    student = serializers.PrimaryKeyRelatedField(read_only=True)
+    instructor = serializers.PrimaryKeyRelatedField(read_only=True)
+    assignment_details = serializers.SerializerMethodField(read_only=True)
+    instructor_details = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = StudentAssignment
+        fields = [
+            "id",
+            "assignment_id",
+            "assignment",
+            "student",
+            "instructor",
+            "name",
+            "description",
+            "media_file",
+            "created_at",
+            "updated_at",
+            "assignment_details",
+            "instructor_details",
+        ]
+        read_only_fields = [
+            "assignment",
+            "student",
+            "instructor",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        assignment = attrs.get("assignment")
+
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError(
+                {"detail": "Authentication is required."}
+            )
+
+        if not assignment:
+            raise serializers.ValidationError(
+                {"assignment_id": "Assignment is required."}
+            )
+
+        if getattr(request.user, "role", None) != "student":
+            raise serializers.ValidationError(
+                {"detail": "Only students can submit student assignments."}
+            )
+
+        if not StudentEnrollment.objects.filter(
+            student=request.user,
+            course=assignment.course,
+        ).exists():
+            raise serializers.ValidationError(
+                {
+                    "assignment_id": "You are not enrolled in the course for this assignment."
+                }
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        assignment = validated_data["assignment"]
+
+        return StudentAssignment.objects.create(
+            student=request.user,
+            instructor=assignment.instructor,
+            **validated_data,
+        )
+
+    def update(self, instance, validated_data):
+        validated_data.pop("assignment", None)
+        validated_data.pop("student", None)
+        validated_data.pop("instructor", None)
+        return super().update(instance, validated_data)
+
+    def get_assignment_details(self, obj):
+        return {
+            "id": obj.assignment_id,
+            "title": obj.assignment.title,
+            "course": {
+                "id": obj.assignment.course_id,
+                "name": obj.assignment.course.course_name,
+                "course_code": obj.assignment.course.course_code,
+            },
+        }
+
+    def get_instructor_details(self, obj):
+        instructor = obj.instructor
+        return {
+            "id": instructor.id,
+            "instructor_id": instructor.instructor_id,
+            "name": instructor.name,
+            "email": instructor.email,
         }

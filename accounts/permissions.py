@@ -32,3 +32,23 @@ class IsStudent(BasePermission):
             request.user.is_authenticated
             and getattr(request.user, "role", None) == "student"
         )
+
+
+class IsStudentAssignmentOwnerOrInstructor(BasePermission):
+    """
+    Allow access to a StudentAssignment if the requester owns it or is the
+    instructor responsible for the related assignment.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user.is_authenticated:
+            return False
+
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+
+        if obj.student_id == request.user.id:
+            return True
+
+        instructor_profile = getattr(request.user, "instructor_profile", None)
+        return instructor_profile is not None and obj.instructor_id == instructor_profile.id

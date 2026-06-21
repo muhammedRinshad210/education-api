@@ -394,3 +394,72 @@ class AssignmentSubmission(models.Model):
 
     def __str__(self):
         return f"{self.student.username} - {self.assignment.title}"
+
+
+class StudentEnrollment(models.Model):
+    """
+    Stores which students are enrolled in which courses.
+
+    This is used to validate that only enrolled students can submit a
+    StudentAssignment for a related assignment course.
+    """
+
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="course_enrollments",
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="student_enrollments",
+    )
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("student", "course")
+        ordering = ["-enrolled_at"]
+
+    def __str__(self):
+        return f"{self.student.username} -> {self.course.course_name}"
+
+
+class StudentAssignment(models.Model):
+    """
+    A student submission for a specific assignment.
+
+    The instructor is derived automatically from the related assignment so
+    clients do not need to send instructor ids in request payloads.
+    """
+
+    assignment = models.ForeignKey(
+        Assignment,
+        on_delete=models.CASCADE,
+        related_name="student_assignments",
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="student_assignments",
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField()
+    media_file = models.FileField(
+        upload_to="student_assignments/",
+        null=True,
+        blank=True,
+    )
+    instructor = models.ForeignKey(
+        Instructor,
+        on_delete=models.CASCADE,
+        related_name="student_assignments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        unique_together = ("assignment", "student")
+
+    def __str__(self):
+        return f"{self.student.username} - {self.assignment.title}"

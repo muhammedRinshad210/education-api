@@ -1,4 +1,5 @@
 from django.urls import path
+from rest_framework.routers import DefaultRouter
 
 from .views import (
     AdminProfileView,
@@ -20,10 +21,14 @@ from .views import (
     LoginView,
     RegisterView,
     StudentAssignmentSubmissionAPIView,
+    StudentAssignmentViewSet,
     StudentListView,
     StudentLoginView,
     StudentRegisterView,
 )
+
+router = DefaultRouter()
+router.register(r"student-assignments", StudentAssignmentViewSet, basename="student-assignment")
 
 urlpatterns = [
     path("register/", RegisterView.as_view()),
@@ -81,3 +86,5 @@ urlpatterns = [
         name="instructor-assignment-submissions",
     ),
 ]
+
+urlpatterns += router.urls
