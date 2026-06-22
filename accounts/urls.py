@@ -19,6 +19,7 @@ from .views import (
     InstructorRegisterView,
     InstructorView,
     LoginView,
+    NoteViewSet,
     RegisterView,
     StudentAssignmentSubmissionAPIView,
     StudentAssignmentViewSet,
@@ -29,6 +30,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r"student-assignments", StudentAssignmentViewSet, basename="student-assignment")
+router.register(r"notes", NoteViewSet, basename="note")
 
 urlpatterns = [
     path("register/", RegisterView.as_view()),

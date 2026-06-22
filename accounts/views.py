@@ -4,10 +4,11 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.db.models import Q
 from rest_framework import status
-from rest_framework import viewsets
+from rest_framework import mixins, viewsets
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -19,11 +20,13 @@ from .models import (
     Course,
     Instructor,
     InstructorCourseAllocation,
+    Note,
     StudentAssignment,
 )
 from .permissions import (
     IsAdminOrReadOnly,
     IsInstructor,
+    IsInstructorNoteAccess,
     IsStudent,
     IsStudentAssignmentOwnerOrInstructor,
 )
@@ -37,6 +40,7 @@ from .serializers import (
     InstructorLoginSerializer,
     InstructorRegisterSerializer,
     InstructorSerializer,
+    NoteSerializer,
     StudentListSerializer,
     StudentAssignmentSerializer,
     StudentRegisterSerializer,
@@ -419,7 +423,19 @@ class CategoryCoursesView(APIView):
 class InstructorView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
 
-    def get(self, request):
+    def get(self, request, pk=None):
+        if pk is not None:
+            try:
+                instructor = Instructor.objects.select_related("user").get(id=pk)
+            except Instructor.DoesNotExist:
+                return Response(
+                    {"message": "Instructor Not Found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = InstructorSerializer(instructor)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
         instructors = Instructor.objects.select_related("user").all()
         serializer = InstructorSerializer(instructors, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -475,7 +491,19 @@ class InstructorView(APIView):
 class CourseAdminView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
 
-    def get(self, request):
+    def get(self, request, pk=None):
+        if pk is not None:
+            try:
+                course = Course.objects.select_related("category").get(id=pk)
+            except Course.DoesNotExist:
+                return Response(
+                    {"message": "Course Not Found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = CourseSerializer(course)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
         courses = Course.objects.select_related("category").all()
         serializer = CourseSerializer(courses, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -531,7 +559,23 @@ class CourseAdminView(APIView):
 class InstructorCourseAllocationView(APIView):
     permission_classes = [IsAuthenticated, IsAdminUser]
 
-    def get(self, request):
+    def get(self, request, pk=None):
+        if pk is not None:
+            try:
+                allocation = InstructorCourseAllocation.objects.select_related(
+                    "instructor",
+                    "course",
+                    "allocated_by",
+                ).get(id=pk)
+            except InstructorCourseAllocation.DoesNotExist:
+                return Response(
+                    {"message": "Allocation Not Found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = InstructorCourseAllocationSerializer(allocation)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
         allocations = InstructorCourseAllocation.objects.select_related(
             "instructor",
             "course",
@@ -720,6 +764,33 @@ class InstructorCoursesAPIView(APIView):
         courses = Course.objects.filter(id__in=course_ids).select_related("category")
         serializer = CourseSerializer(courses, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NoteViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    permission_classes = [IsInstructorNoteAccess]
+    serializer_class = NoteSerializer
+
+    def get_queryset(self):
+        return Note.objects.select_related(
+            "course",
+            "course__category",
+            "instructor",
+            "instructor__user",
+        ).all()
+
+    def perform_create(self, serializer):
+        instructor_profile = getattr(self.request.user, "instructor_profile", None)
+
+        if instructor_profile is None:
+            raise ValidationError({"detail": "Only instructors can create notes."})
+
+        serializer.save(instructor=instructor_profile)
 
 
 class InstructorAssignmentCreateAPIView(APIView):

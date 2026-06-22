@@ -11,6 +11,7 @@ from accounts.models import (
     InstructorCourseAllocation,
     Assignment,
     AssignmentSubmission,
+    Note,
     StudentEnrollment,
     StudentAssignment,
 )
@@ -399,7 +400,7 @@ class InstructorLoginSerializer(serializers.Serializer):
 from rest_framework import serializers
 from .models import Course
 
-class CourseSerializer(serializers.ModelSerializer):
+class LegacyCourseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Course
@@ -410,6 +411,30 @@ class CourseSerializer(serializers.ModelSerializer):
             'duration',
             'fees',
             'description'
+        ]
+
+
+class NoteSerializer(serializers.ModelSerializer):
+    course_details = CourseSerializer(source="course", read_only=True)
+    instructor_details = InstructorSerializer(source="instructor", read_only=True)
+
+    class Meta:
+        model = Note
+        fields = [
+            "id",
+            "course",
+            "course_details",
+            "instructor",
+            "instructor_details",
+            "title",
+            "content",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "instructor",
+            "created_at",
+            "updated_at",
         ]
 
 
