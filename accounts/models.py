@@ -419,6 +419,37 @@ class Note(models.Model):
         return self.title
 
 
+class CourseVideo(models.Model):
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="videos",
+    )
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, null=True)
+    video_url = models.URLField(max_length=500)
+    thumbnail = models.ImageField(
+        upload_to="course_videos/thumbnails/",
+        null=True,
+        blank=True,
+    )
+    order = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="course_videos",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["course", "order", "created_at"]
+
+    def __str__(self):
+        return self.title
+
+
 class StudentEnrollment(models.Model):
     """
     Stores which students are enrolled in which courses.

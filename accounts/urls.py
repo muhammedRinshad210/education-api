@@ -19,8 +19,11 @@ from .views import (
     InstructorRegisterView,
     InstructorView,
     LoginView,
+    CourseVideoViewSet,
     NoteViewSet,
     RegisterView,
+    StudentCourseVideoDetailAPIView,
+    StudentCourseVideoListAPIView,
     StudentAssignmentSubmissionAPIView,
     StudentAssignmentViewSet,
     StudentListView,
@@ -31,6 +34,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r"student-assignments", StudentAssignmentViewSet, basename="student-assignment")
 router.register(r"notes", NoteViewSet, basename="note")
+router.register(r"videos", CourseVideoViewSet, basename="video")
 
 urlpatterns = [
     path("register/", RegisterView.as_view()),
@@ -86,6 +90,16 @@ urlpatterns = [
         "instructor/assignments/submissions/",
         InstructorAssignmentSubmissionAPIView.as_view(),
         name="instructor-assignment-submissions",
+    ),
+    path(
+        "student/courses/<int:course_id>/videos/",
+        StudentCourseVideoListAPIView.as_view(),
+        name="student-course-videos",
+    ),
+    path(
+        "student/courses/<int:course_id>/videos/<int:video_id>/",
+        StudentCourseVideoDetailAPIView.as_view(),
+        name="student-course-video-detail",
     ),
 ]
 

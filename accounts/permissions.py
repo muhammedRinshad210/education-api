@@ -1,37 +1,24 @@
-from rest_framework.permissions import BasePermission, SAFE_METHODS
+﻿from rest_framework.permissions import BasePermission, SAFE_METHODS
+
+from accounts.utils import get_instructor_profile, instructor_has_course_allocation, is_admin_user
+
 
 class IsAdminOrReadOnly(BasePermission):
-
     def has_permission(self, request, view):
-
-        # GET allowed for authenticated users
         if request.method in SAFE_METHODS:
             return request.user.is_authenticated
 
-        # POST PUT DELETE admin only
         return request.user.is_staff
 
-# permissions.py
-
-from rest_framework.permissions import BasePermission
 
 class IsInstructor(BasePermission):
-
     def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and hasattr(request.user, "instructor_profile")
-        )
+        return request.user.is_authenticated and get_instructor_profile(request.user) is not None
 
 
 class IsStudent(BasePermission):
-
     def has_permission(self, request, view):
-
-        return (
-            request.user.is_authenticated
-            and getattr(request.user, "role", None) == "student"
-        )
+        return request.user.is_authenticated and getattr(request.user, 'role', None) == 'student'
 
 
 class IsStudentAssignmentOwnerOrInstructor(BasePermission):
@@ -50,29 +37,31 @@ class IsStudentAssignmentOwnerOrInstructor(BasePermission):
         if obj.student_id == request.user.id:
             return True
 
-        instructor_profile = getattr(request.user, "instructor_profile", None)
+        instructor_profile = get_instructor_profile(request.user)
         return instructor_profile is not None and obj.instructor_id == instructor_profile.id
 
 
-class IsInstructorNoteAccess(BasePermission):
-    """
-    Allow authenticated users to read notes.
-    Allow instructors to create/update notes.
-    Only the owning instructor can modify a note.
-    """
-
+class IsAdminOrInstructorCourseContent(BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
 
-        if request.method in SAFE_METHODS:
-            return True
-
-        return hasattr(request.user, "instructor_profile")
+        return is_admin_user(request.user) or get_instructor_profile(request.user) is not None
 
     def has_object_permission(self, request, view, obj):
-        if request.method in SAFE_METHODS:
+        if is_admin_user(request.user):
             return True
 
-        instructor_profile = getattr(request.user, "instructor_profile", None)
-        return instructor_profile is not None and obj.instructor_id == instructor_profile.id
+        instructor_profile = get_instructor_profile(request.user)
+        if instructor_profile is None:
+            return False
+
+        course = getattr(obj, 'course', None)
+        if course is None and hasattr(obj, 'assignment'):
+            course = getattr(obj.assignment, 'course', None)
+
+        return instructor_has_course_allocation(instructor_profile, course)
+
+
+class IsInstructorNoteAccess(IsAdminOrInstructorCourseContent):
+    pass

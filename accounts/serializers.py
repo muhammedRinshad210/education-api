@@ -1,31 +1,29 @@
-# accounts/serializers.py
-
+﻿from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from django.contrib.auth import get_user_model  # ✅ Fix auth.User error
 
 from accounts.models import (
     Accounts,
-    Instructor,
-    Course,
-    Category,
-    InstructorCourseAllocation,
     Assignment,
     AssignmentSubmission,
+    Category,
+    Course,
+    CourseVideo,
+    Instructor,
+    InstructorCourseAllocation,
     Note,
-    StudentEnrollment,
     StudentAssignment,
+    StudentEnrollment,
+)
+from accounts.utils import (
+    get_instructor_profile,
+    instructor_has_course_allocation,
+    is_admin_user,
 )
 
-# ✅ Get correct User model (works with custom user model)
 User = get_user_model()
 
 
-# ─────────────────────────────────────────────
-# User Serializer
-# ─────────────────────────────────────────────
-
 class UserSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = User
         fields = [
@@ -34,16 +32,11 @@ class UserSerializer(serializers.ModelSerializer):
             'email',
             'first_name',
             'last_name',
-            'is_active'
+            'is_active',
         ]
 
 
-# ─────────────────────────────────────────────
-# Account Serializer
-# ─────────────────────────────────────────────
-
 class AccountSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Accounts
         fields = [
@@ -51,16 +44,11 @@ class AccountSerializer(serializers.ModelSerializer):
             'username',
             'email',
             'phone',
-            'role'
+            'role',
         ]
 
 
-# ─────────────────────────────────────────────
-# Register Serializer
-# ─────────────────────────────────────────────
-
 class RegisterSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Accounts
         fields = [
@@ -69,23 +57,20 @@ class RegisterSerializer(serializers.ModelSerializer):
             'password',
             'email',
             'phone',
-            'role'
+            'role',
         ]
         extra_kwargs = {
-            'password': {'write_only': True}
+            'password': {'write_only': True},
         }
 
     def create(self, validated_data):
-
-        user = Accounts.objects.create_user(
+        return Accounts.objects.create_user(
             username=validated_data['username'],
             password=validated_data['password'],
             email=validated_data['email'],
             phone=validated_data.get('phone'),
-            role=validated_data['role']
+            role=validated_data['role'],
         )
-
-        return user
 
 
 class StudentRegisterSerializer(serializers.Serializer):
@@ -98,37 +83,32 @@ class StudentRegisterSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, data):
-        if data["password"] != data["confirm_password"]:
+        if data['password'] != data['confirm_password']:
             raise serializers.ValidationError(
-                {"confirm_password": "Passwords do not match"}
+                {'confirm_password': 'Passwords do not match'}
             )
 
-        if Accounts.objects.filter(username=data["username"]).exists():
+        if Accounts.objects.filter(username=data['username']).exists():
             raise serializers.ValidationError(
-                {"username": "A user with that username already exists."}
+                {'username': 'A user with that username already exists.'}
             )
 
         return data
 
     def create(self, validated_data):
-        validated_data.pop("confirm_password", None)
+        validated_data.pop('confirm_password', None)
         return Accounts.objects.create_user(
-            username=validated_data["username"],
-            password=validated_data["password"],
-            email=validated_data.get("email", ""),
-            phone=validated_data.get("phone"),
-            first_name=validated_data.get("first_name", ""),
-            last_name=validated_data.get("last_name", ""),
-            role="student",
+            username=validated_data['username'],
+            password=validated_data['password'],
+            email=validated_data.get('email', ''),
+            phone=validated_data.get('phone'),
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+            role='student',
         )
 
 
-# ─────────────────────────────────────────────
-# Admin Profile Serializer
-# ─────────────────────────────────────────────
-
 class AdminProfileSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Accounts
         fields = [
@@ -141,7 +121,7 @@ class AdminProfileSerializer(serializers.ModelSerializer):
             'phone',
             'is_active',
             'is_superuser',
-            'is_staff'
+            'is_staff',
         ]
 
 
@@ -161,64 +141,31 @@ class StudentListSerializer(serializers.ModelSerializer):
         ]
 
 
-# ─────────────────────────────────────────────
-# Category Serializer
-# ─────────────────────────────────────────────
-
 class CategorySerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Category
         fields = '__all__'
 
     def validate_name(self, value):
-
         value = value.lower()
 
-        # Exclude current instance when updating
         if self.instance:
-
-            if Category.objects.filter(
-                name__iexact=value
-            ).exclude(
-                id=self.instance.id
-            ).exists():
-
-                raise serializers.ValidationError(
-                    "Category already exists"
-                )
-
+            if Category.objects.filter(name__iexact=value).exclude(id=self.instance.id).exists():
+                raise serializers.ValidationError('Category already exists')
         else:
-
-            if Category.objects.filter(
-                name__iexact=value
-            ).exists():
-
-                raise serializers.ValidationError(
-                    "Category already exists"
-                )
+            if Category.objects.filter(name__iexact=value).exists():
+                raise serializers.ValidationError('Category already exists')
 
         return value
 
 
-# ─────────────────────────────────────────────
-# Course Serializer
-# ─────────────────────────────────────────────
-
 class CourseSerializer(serializers.ModelSerializer):
-
-    # For writing (accepts category ID)
     category = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
         required=False,
-        allow_null=True
+        allow_null=True,
     )
-
-    # For reading (shows category details)
-    category_details = CategorySerializer(
-        source='category',
-        read_only=True
-    )
+    category_details = CategorySerializer(source='category', read_only=True)
 
     class Meta:
         model = Course
@@ -229,22 +176,13 @@ class CourseSerializer(serializers.ModelSerializer):
             'category_details',
             'course_name',
             'duration',
-            'fees'
+            'fees',
         ]
         read_only_fields = ['user']
 
 
-# ─────────────────────────────────────────────
-# Instructor Serializer
-# ─────────────────────────────────────────────
-
 class InstructorSerializer(serializers.ModelSerializer):
-
-    # Show linked user details (read only)
-    user_info = UserSerializer(
-        source='user',
-        read_only=True
-    )
+    user_info = UserSerializer(source='user', read_only=True)
 
     class Meta:
         model = Instructor
@@ -256,98 +194,70 @@ class InstructorSerializer(serializers.ModelSerializer):
             'email',
             'status',
             'created_at',
-            'user',         # FK field (write)
-            'user_info'     # Nested (read)
+            'user',
+            'user_info',
         ]
         extra_kwargs = {
             'user': {
                 'write_only': True,
-                'required': False
+                'required': False,
             },
             'password': {
-                'write_only': True
-            }
+                'write_only': True,
+            },
         }
 
 
-# ─────────────────────────────────────────────
-# Instructor Course Allocation Serializer
-# ─────────────────────────────────────────────
-
 class InstructorCourseAllocationSerializer(serializers.ModelSerializer):
-
-    # Nested read-only details
-    instructor_detail = InstructorSerializer(
-        source='instructor',
-        read_only=True
-    )
-
-    course_detail = CourseSerializer(
-        source='course',
-        read_only=True
-    )
-
-    allocated_by_detail = UserSerializer(
-        source='allocated_by',
-        read_only=True
-    )
+    instructor_detail = InstructorSerializer(source='instructor', read_only=True)
+    course_detail = CourseSerializer(source='course', read_only=True)
+    allocated_by_detail = UserSerializer(source='allocated_by', read_only=True)
 
     class Meta:
         model = InstructorCourseAllocation
         fields = [
             'id',
-            'instructor',           # FK (write)
-            'course',               # FK (write)
-            'allocated_by',         # FK (write)
+            'instructor',
+            'course',
+            'allocated_by',
             'allocation_status',
             'start_date',
             'end_date',
             'allocated_at',
-            'instructor_detail',    # Nested (read)
-            'course_detail',        # Nested (read)
-            'allocated_by_detail'   # Nested (read)
+            'instructor_detail',
+            'course_detail',
+            'allocated_by_detail',
         ]
         extra_kwargs = {
             'instructor': {
-                'write_only': True
+                'write_only': True,
             },
             'course': {
-                'write_only': True
+                'write_only': True,
             },
             'allocated_by': {
                 'write_only': True,
-                'required': False
-            }
+                'required': False,
+            },
         }
 
     def validate(self, data):
-
         instructor = data.get('instructor')
         course = data.get('course')
 
-        # Duplicate check on create only
         if not self.instance:
-
             if InstructorCourseAllocation.objects.filter(
                 instructor=instructor,
-                course=course
+                course=course,
             ).exists():
-
                 raise serializers.ValidationError(
-                    {
-                        "error": "This instructor is already allocated to this course"
-                    }
+                    {'error': 'This instructor is already allocated to this course'}
                 )
 
         return data
 
 
-# ─────────────────────────────────────────────
-# Instructor Register Serializer
-# ─────────────────────────────────────────────
-
 class InstructorRegisterSerializer(serializers.Serializer):
-
     instructor_id = serializers.CharField()
     email = serializers.EmailField()
     phone = serializers.CharField()
@@ -355,53 +265,32 @@ class InstructorRegisterSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-
         if data['password'] != data['confirm_password']:
-
             raise serializers.ValidationError(
-                {
-                    "confirm_password": "Passwords do not match"
-                }
+                {'confirm_password': 'Passwords do not match'}
             )
 
         try:
-
             instructor = Instructor.objects.get(
                 instructor_id=data['instructor_id'],
                 email=data['email'],
-                phone=data['phone']
+                phone=data['phone'],
             )
-
         except Instructor.DoesNotExist:
-
             raise serializers.ValidationError(
-                {
-                    "error": "Invalid Instructor Credentials"
-                }
+                {'error': 'Invalid Instructor Credentials'}
             )
 
         data['instructor'] = instructor
-
         return data
 
 
-# ─────────────────────────────────────────────
-# Instructor Login Serializer
-# ─────────────────────────────────────────────
-
 class InstructorLoginSerializer(serializers.Serializer):
-
     username = serializers.CharField()
     password = serializers.CharField()
 
 
-# serializers.py
-
-from rest_framework import serializers
-from .models import Course
-
 class LegacyCourseSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Course
         fields = [
@@ -410,37 +299,76 @@ class LegacyCourseSerializer(serializers.ModelSerializer):
             'course_name',
             'duration',
             'fees',
-            'description'
+            'description',
         ]
 
 
-class NoteSerializer(serializers.ModelSerializer):
-    course_details = CourseSerializer(source="course", read_only=True)
-    instructor_details = InstructorSerializer(source="instructor", read_only=True)
+class ContentAccessValidationMixin:
+    def validate_course_access(self, attrs):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError({'detail': 'Authentication is required.'})
+
+        course = attrs.get('course') or getattr(self.instance, 'course', None)
+        if course is None:
+            return attrs
+
+        if is_admin_user(request.user):
+            return attrs
+
+        instructor = get_instructor_profile(request.user)
+        if instructor is None:
+            raise serializers.ValidationError(
+                {'detail': 'Only instructors and admins can manage this content.'}
+            )
+
+        if not instructor_has_course_allocation(instructor, course):
+            raise serializers.ValidationError(
+                {'course': 'This course is not allocated to you.'}
+            )
+
+        if 'instructor' in getattr(self, 'fields', {}):
+            attrs['instructor'] = instructor
+        return attrs
+
+
+class NoteSerializer(ContentAccessValidationMixin, serializers.ModelSerializer):
+    course_details = CourseSerializer(source='course', read_only=True)
+    instructor_details = InstructorSerializer(source='instructor', read_only=True)
+    instructor = serializers.PrimaryKeyRelatedField(
+        queryset=Instructor.objects.all(),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = Note
         fields = [
-            "id",
-            "course",
-            "course_details",
-            "instructor",
-            "instructor_details",
-            "title",
-            "content",
-            "created_at",
-            "updated_at",
+            'id',
+            'course',
+            'course_details',
+            'instructor',
+            'instructor_details',
+            'title',
+            'content',
+            'created_at',
+            'updated_at',
         ]
         read_only_fields = [
-            "instructor",
-            "created_at",
-            "updated_at",
+            'created_at',
+            'updated_at',
         ]
 
+    def validate(self, attrs):
+        return self.validate_course_access(attrs)
 
-class AssignmentSerializer(serializers.ModelSerializer):
-    name = serializers.CharField(
-        source='title'
+
+class AssignmentSerializer(ContentAccessValidationMixin, serializers.ModelSerializer):
+    name = serializers.CharField(source='title')
+    instructor = serializers.PrimaryKeyRelatedField(
+        queryset=Instructor.objects.all(),
+        required=False,
+        allow_null=True,
     )
 
     class Meta:
@@ -454,72 +382,105 @@ class AssignmentSerializer(serializers.ModelSerializer):
             'image',
             'due_date',
             'status',
-            'created_at'
+            'created_at',
         ]
         read_only_fields = [
-            'instructor',
             'status',
-            'created_at'
+            'created_at',
         ]
         extra_kwargs = {
             'image': {
                 'required': False,
-                'allow_null': True
+                'allow_null': True,
             }
         }
+
+    def validate(self, attrs):
+        return self.validate_course_access(attrs)
+
+
+class CourseVideoSerializer(ContentAccessValidationMixin, serializers.ModelSerializer):
+    course_details = CourseSerializer(source='course', read_only=True)
+    created_by_details = UserSerializer(source='created_by', read_only=True)
+    thumbnail = serializers.ImageField(required=False, allow_null=True)
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = CourseVideo
+        fields = [
+            'id',
+            'course',
+            'course_details',
+            'title',
+            'description',
+            'video_url',
+            'thumbnail',
+            'order',
+            'is_active',
+            'created_by',
+            'created_by_details',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'created_by',
+            'created_at',
+            'updated_at',
+        ]
+
+    def validate(self, attrs):
+        return self.validate_course_access(attrs)
 
 
 class AssignmentSubmissionSerializer(serializers.ModelSerializer):
     assignment_details = serializers.SerializerMethodField()
     student_details = UserSerializer(
-        source="student",
+        source='student',
         read_only=True,
     )
 
     class Meta:
         model = AssignmentSubmission
         fields = [
-            "id",
-            "assignment",
-            "assignment_details",
-            "student",
-            "student_details",
-            "submission_file",
-            "submission_text",
-            "status",
-            "submitted_at",
-            "updated_at",
+            'id',
+            'assignment',
+            'assignment_details',
+            'student',
+            'student_details',
+            'submission_file',
+            'submission_text',
+            'status',
+            'submitted_at',
+            'updated_at',
         ]
         read_only_fields = [
-            "student",
-            "status",
-            "submitted_at",
-            "updated_at",
+            'student',
+            'status',
+            'submitted_at',
+            'updated_at',
         ]
 
     def validate(self, data):
-        if not data.get("submission_file") and not data.get("submission_text"):
+        if not data.get('submission_file') and not data.get('submission_text'):
             raise serializers.ValidationError(
-                {
-                    "submission": "Provide at least a file or submission text."
-                }
+                {'submission': 'Provide at least a file or submission text.'}
             )
 
         return data
 
     def get_assignment_details(self, obj):
         return {
-            "id": obj.assignment_id,
-            "title": obj.assignment.title,
-            "course": {
-                "id": obj.assignment.course_id,
-                "course_name": obj.assignment.course.course_name,
-                "course_code": obj.assignment.course.course_code,
+            'id': obj.assignment_id,
+            'title': obj.assignment.title,
+            'course': {
+                'id': obj.assignment.course_id,
+                'course_name': obj.assignment.course.course_name,
+                'course_code': obj.assignment.course.course_code,
             },
-            "instructor": {
-                "id": obj.assignment.instructor_id,
-                "name": obj.assignment.instructor.name,
-                "instructor_id": obj.assignment.instructor.instructor_id,
+            'instructor': {
+                'id': obj.assignment.instructor_id,
+                'name': obj.assignment.instructor.name,
+                'instructor_id': obj.assignment.instructor.instructor_id,
             },
         }
 
@@ -533,8 +494,8 @@ class StudentAssignmentSerializer(serializers.ModelSerializer):
     """
 
     assignment_id = serializers.PrimaryKeyRelatedField(
-        source="assignment",
-        queryset=Assignment.objects.select_related("course", "instructor"),
+        source='assignment',
+        queryset=Assignment.objects.select_related('course', 'instructor'),
         write_only=True,
     )
     assignment = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -546,44 +507,40 @@ class StudentAssignmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = StudentAssignment
         fields = [
-            "id",
-            "assignment_id",
-            "assignment",
-            "student",
-            "instructor",
-            "name",
-            "description",
-            "media_file",
-            "created_at",
-            "updated_at",
-            "assignment_details",
-            "instructor_details",
+            'id',
+            'assignment_id',
+            'assignment',
+            'student',
+            'instructor',
+            'name',
+            'description',
+            'media_file',
+            'created_at',
+            'updated_at',
+            'assignment_details',
+            'instructor_details',
         ]
         read_only_fields = [
-            "assignment",
-            "student",
-            "instructor",
-            "created_at",
-            "updated_at",
+            'assignment',
+            'student',
+            'instructor',
+            'created_at',
+            'updated_at',
         ]
 
     def validate(self, attrs):
-        request = self.context.get("request")
-        assignment = attrs.get("assignment")
+        request = self.context.get('request')
+        assignment = attrs.get('assignment')
 
         if not request or not request.user.is_authenticated:
-            raise serializers.ValidationError(
-                {"detail": "Authentication is required."}
-            )
+            raise serializers.ValidationError({'detail': 'Authentication is required.'})
 
         if not assignment:
-            raise serializers.ValidationError(
-                {"assignment_id": "Assignment is required."}
-            )
+            raise serializers.ValidationError({'assignment_id': 'Assignment is required.'})
 
-        if getattr(request.user, "role", None) != "student":
+        if getattr(request.user, 'role', None) != 'student':
             raise serializers.ValidationError(
-                {"detail": "Only students can submit student assignments."}
+                {'detail': 'Only students can submit student assignments.'}
             )
 
         if not StudentEnrollment.objects.filter(
@@ -592,15 +549,15 @@ class StudentAssignmentSerializer(serializers.ModelSerializer):
         ).exists():
             raise serializers.ValidationError(
                 {
-                    "assignment_id": "You are not enrolled in the course for this assignment."
+                    'assignment_id': 'You are not enrolled in the course for this assignment.'
                 }
             )
 
         return attrs
 
     def create(self, validated_data):
-        request = self.context["request"]
-        assignment = validated_data["assignment"]
+        request = self.context['request']
+        assignment = validated_data['assignment']
 
         return StudentAssignment.objects.create(
             student=request.user,
@@ -609,27 +566,27 @@ class StudentAssignmentSerializer(serializers.ModelSerializer):
         )
 
     def update(self, instance, validated_data):
-        validated_data.pop("assignment", None)
-        validated_data.pop("student", None)
-        validated_data.pop("instructor", None)
+        validated_data.pop('assignment', None)
+        validated_data.pop('student', None)
+        validated_data.pop('instructor', None)
         return super().update(instance, validated_data)
 
     def get_assignment_details(self, obj):
         return {
-            "id": obj.assignment_id,
-            "title": obj.assignment.title,
-            "course": {
-                "id": obj.assignment.course_id,
-                "name": obj.assignment.course.course_name,
-                "course_code": obj.assignment.course.course_code,
+            'id': obj.assignment_id,
+            'title': obj.assignment.title,
+            'course': {
+                'id': obj.assignment.course_id,
+                'name': obj.assignment.course.course_name,
+                'course_code': obj.assignment.course.course_code,
             },
         }
 
     def get_instructor_details(self, obj):
         instructor = obj.instructor
         return {
-            "id": instructor.id,
-            "instructor_id": instructor.instructor_id,
-            "name": instructor.name,
-            "email": instructor.email,
+            'id': instructor.id,
+            'instructor_id': instructor.instructor_id,
+            'name': instructor.name,
+            'email': instructor.email,
         }

@@ -18,6 +18,7 @@ from .models import (
     AssignmentSubmission,
     Category,
     Course,
+    CourseVideo,
     Instructor,
     InstructorCourseAllocation,
     Note,
@@ -25,6 +26,7 @@ from .models import (
 )
 from .permissions import (
     IsAdminOrReadOnly,
+    IsAdminOrInstructorCourseContent,
     IsInstructor,
     IsInstructorNoteAccess,
     IsStudent,
@@ -40,10 +42,18 @@ from .serializers import (
     InstructorLoginSerializer,
     InstructorRegisterSerializer,
     InstructorSerializer,
+    CourseVideoSerializer,
     NoteSerializer,
     StudentListSerializer,
     StudentAssignmentSerializer,
     StudentRegisterSerializer,
+)
+from .utils import (
+    get_instructor_profile,
+    instructor_has_course_allocation,
+    is_admin_user,
+    resolve_content_instructor,
+    student_is_enrolled_in_course,
 )
 
 User = get_user_model()
@@ -771,50 +781,193 @@ class NoteViewSet(
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
     mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    permission_classes = [IsInstructorNoteAccess]
+    permission_classes = [IsAdminOrInstructorCourseContent]
     serializer_class = NoteSerializer
 
     def get_queryset(self):
-        return Note.objects.select_related(
+        queryset = Note.objects.select_related(
             "course",
             "course__category",
             "instructor",
             "instructor__user",
-        ).all()
+        )
+
+        user = self.request.user
+        if is_admin_user(user):
+            return queryset.all()
+
+        instructor_profile = get_instructor_profile(user)
+        if instructor_profile is None:
+            return queryset.none()
+
+        return queryset.filter(
+            course__instructor_allocations__instructor=instructor_profile,
+            course__instructor_allocations__allocation_status="active",
+        ).distinct()
 
     def perform_create(self, serializer):
-        instructor_profile = getattr(self.request.user, "instructor_profile", None)
+        course = serializer.validated_data.get("course")
+        instructor = serializer.validated_data.get("instructor")
 
+        if is_admin_user(self.request.user):
+            instructor = resolve_content_instructor(course, instructor)
+            if instructor is None:
+                raise ValidationError(
+                    {"instructor": "Provide an instructor for this course."}
+                )
+        else:
+            instructor = get_instructor_profile(self.request.user)
+
+        serializer.save(instructor=instructor)
+
+
+class CourseVideoViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    permission_classes = [IsAdminOrInstructorCourseContent]
+    serializer_class = CourseVideoSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get_queryset(self):
+        queryset = CourseVideo.objects.select_related(
+            "course",
+            "course__category",
+            "created_by",
+        )
+
+        course_id = self.request.query_params.get("course_id")
+        if course_id:
+            queryset = queryset.filter(course_id=course_id)
+
+        user = self.request.user
+        if is_admin_user(user):
+            return queryset
+
+        instructor_profile = get_instructor_profile(user)
         if instructor_profile is None:
-            raise ValidationError({"detail": "Only instructors can create notes."})
+            return queryset.none()
 
-        serializer.save(instructor=instructor_profile)
+        return queryset.filter(
+            course__instructor_allocations__instructor=instructor_profile,
+            course__instructor_allocations__allocation_status="active",
+        ).distinct()
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+
+class StudentCourseVideoListAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def get(self, request, course_id):
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response(
+                {"message": "Course Not Found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not student_is_enrolled_in_course(request.user, course):
+            return Response(
+                {"detail": "You are not enrolled in this course."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        videos = CourseVideo.objects.filter(
+            course_id=course_id,
+            is_active=True,
+        ).select_related("course", "course__category", "created_by")
+        serializer = CourseVideoSerializer(videos, many=True, context={"request": request})
+        return Response(
+            {
+                "message": "Course videos fetched successfully",
+                "count": videos.count(),
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class StudentCourseVideoDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def get(self, request, course_id, video_id):
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response(
+                {"message": "Course Not Found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not student_is_enrolled_in_course(request.user, course):
+            return Response(
+                {"detail": "You are not enrolled in this course."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            video = CourseVideo.objects.select_related(
+                "course",
+                "course__category",
+                "created_by",
+            ).get(id=video_id, course_id=course_id, is_active=True)
+        except CourseVideo.DoesNotExist:
+            return Response(
+                {"message": "Video Not Found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = CourseVideoSerializer(video, context={"request": request})
+        return Response(
+            {
+                "message": "Course video fetched successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class InstructorAssignmentCreateAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsInstructor]
+    permission_classes = [IsAuthenticated, IsAdminOrInstructorCourseContent]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
-    def get_object(self, pk, instructor):
+    def get_queryset(self, user):
+        queryset = Assignment.objects.select_related("course", "instructor")
+
+        if is_admin_user(user):
+            return queryset.all()
+
+        instructor = get_instructor_profile(user)
+        if instructor is None:
+            return queryset.none()
+
+        return queryset.filter(
+            course__instructor_allocations__instructor=instructor,
+            course__instructor_allocations__allocation_status="active",
+        ).distinct()
+
+    def get_object(self, pk, user):
         try:
-            return Assignment.objects.get(id=pk, instructor=instructor)
+            return self.get_queryset(user).get(id=pk)
         except Assignment.DoesNotExist:
             return None
 
-    def has_access_to_course(self, instructor, course_id):
-        return InstructorCourseAllocation.objects.filter(
-            instructor=instructor,
-            course_id=course_id,
-            allocation_status="active",
-        ).exists()
-
     def get(self, request, pk=None):
-        instructor = request.user.instructor_profile
-
         if pk is not None:
-            assignment = self.get_object(pk, instructor)
+            assignment = self.get_object(pk, request.user)
 
             if not assignment:
                 return Response(
@@ -825,26 +978,26 @@ class InstructorAssignmentCreateAPIView(APIView):
             serializer = AssignmentSerializer(assignment)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        assignments = Assignment.objects.filter(instructor=instructor).select_related(
-            "course"
-        )
+        assignments = self.get_queryset(request.user)
         serializer = AssignmentSerializer(assignments, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        instructor = request.user.instructor_profile
-        course_id = request.data.get("course")
-
-        if not self.has_access_to_course(instructor, course_id):
-            return Response(
-                {
-                    "message": "You can create assignments only for your assigned courses"
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         serializer = AssignmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        course = serializer.validated_data["course"]
+        instructor = serializer.validated_data.get("instructor")
+
+        if is_admin_user(request.user):
+            instructor = resolve_content_instructor(course, instructor)
+            if instructor is None:
+                raise ValidationError(
+                    {"instructor": "Provide an instructor for this course."}
+                )
+        else:
+            instructor = get_instructor_profile(request.user)
+
         serializer.save(instructor=instructor)
 
         return Response(
@@ -862,22 +1015,12 @@ class InstructorAssignmentCreateAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        instructor = request.user.instructor_profile
-        assignment = self.get_object(pk, instructor)
+        assignment = self.get_object(pk, request.user)
 
         if not assignment:
             return Response(
                 {"message": "Assignment Not Found"},
                 status=status.HTTP_404_NOT_FOUND,
-            )
-
-        course_id = request.data.get("course")
-        if course_id and not self.has_access_to_course(instructor, course_id):
-            return Response(
-                {
-                    "message": "You can update assignments only for your assigned courses"
-                },
-                status=status.HTTP_400_BAD_REQUEST,
             )
 
         serializer = AssignmentSerializer(
@@ -886,7 +1029,7 @@ class InstructorAssignmentCreateAPIView(APIView):
             partial=True,
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save(instructor=instructor)
+        serializer.save()
 
         return Response(
             {
@@ -903,8 +1046,7 @@ class InstructorAssignmentCreateAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        instructor = request.user.instructor_profile
-        assignment = self.get_object(pk, instructor)
+        assignment = self.get_object(pk, request.user)
 
         if not assignment:
             return Response(
