@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 
-from .models import InstructorCourseAllocation, StudentEnrollment
+from .models import Enrollment, InstructorCourseAllocation
 
 
 User = get_user_model()
@@ -48,7 +48,7 @@ def student_is_enrolled_in_course(student, course):
     if student is None or course is None:
         return False
 
-    return StudentEnrollment.objects.filter(student=student, course=course).exists()
+    return Enrollment.objects.filter(student=student, course=course, status=True).exists()
 
 
 def resolve_content_instructor(course, provided_instructor=None):

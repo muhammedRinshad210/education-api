@@ -450,12 +450,11 @@ class CourseVideo(models.Model):
         return self.title
 
 
-class StudentEnrollment(models.Model):
+class Enrollment(models.Model):
     """
     Stores which students are enrolled in which courses.
 
-    This is used to validate that only enrolled students can submit a
-    StudentAssignment for a related assignment course.
+    An active enrollment means the student can access the course content.
     """
 
     student = models.ForeignKey(
@@ -468,6 +467,7 @@ class StudentEnrollment(models.Model):
         on_delete=models.CASCADE,
         related_name="student_enrollments",
     )
+    status = models.BooleanField(default=True)
     enrolled_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -476,6 +476,10 @@ class StudentEnrollment(models.Model):
 
     def __str__(self):
         return f"{self.student.username} -> {self.course.course_name}"
+
+
+# Backward-compatible alias for older imports and code paths.
+StudentEnrollment = Enrollment
 
 
 class StudentAssignment(models.Model):

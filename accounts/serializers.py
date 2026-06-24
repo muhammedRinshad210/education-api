@@ -8,11 +8,11 @@ from accounts.models import (
     Category,
     Course,
     CourseVideo,
+    Enrollment,
     Instructor,
     InstructorCourseAllocation,
     Note,
     StudentAssignment,
-    StudentEnrollment,
 )
 from accounts.utils import (
     get_instructor_profile,
@@ -432,6 +432,19 @@ class CourseVideoSerializer(ContentAccessValidationMixin, serializers.ModelSeria
         return self.validate_course_access(attrs)
 
 
+class StudentCourseVideoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CourseVideo
+        fields = [
+            'title',
+            'description',
+            'video_url',
+            'thumbnail',
+            'order',
+            'created_at',
+        ]
+
+
 class AssignmentSubmissionSerializer(serializers.ModelSerializer):
     assignment_details = serializers.SerializerMethodField()
     student_details = UserSerializer(
@@ -543,9 +556,10 @@ class StudentAssignmentSerializer(serializers.ModelSerializer):
                 {'detail': 'Only students can submit student assignments.'}
             )
 
-        if not StudentEnrollment.objects.filter(
+        if not Enrollment.objects.filter(
             student=request.user,
             course=assignment.course,
+            status=True,
         ).exists():
             raise serializers.ValidationError(
                 {

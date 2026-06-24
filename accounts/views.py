@@ -45,6 +45,7 @@ from .serializers import (
     CourseVideoSerializer,
     NoteSerializer,
     StudentListSerializer,
+    StudentCourseVideoSerializer,
     StudentAssignmentSerializer,
     StudentRegisterSerializer,
 )
@@ -879,6 +880,12 @@ class StudentCourseVideoListAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if not course.status:
+            return Response(
+                {"message": "Course Not Found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         if not student_is_enrolled_in_course(request.user, course):
             return Response(
                 {"detail": "You are not enrolled in this course."},
@@ -889,7 +896,11 @@ class StudentCourseVideoListAPIView(APIView):
             course_id=course_id,
             is_active=True,
         ).select_related("course", "course__category", "created_by")
-        serializer = CourseVideoSerializer(videos, many=True, context={"request": request})
+        serializer = StudentCourseVideoSerializer(
+            videos,
+            many=True,
+            context={"request": request},
+        )
         return Response(
             {
                 "message": "Course videos fetched successfully",
@@ -907,6 +918,12 @@ class StudentCourseVideoDetailAPIView(APIView):
         try:
             course = Course.objects.get(id=course_id)
         except Course.DoesNotExist:
+            return Response(
+                {"message": "Course Not Found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not course.status:
             return Response(
                 {"message": "Course Not Found"},
                 status=status.HTTP_404_NOT_FOUND,
@@ -930,7 +947,10 @@ class StudentCourseVideoDetailAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        serializer = CourseVideoSerializer(video, context={"request": request})
+        serializer = StudentCourseVideoSerializer(
+            video,
+            context={"request": request},
+        )
         return Response(
             {
                 "message": "Course video fetched successfully",
