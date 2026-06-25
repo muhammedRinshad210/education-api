@@ -2,13 +2,14 @@ from collections import defaultdict
 
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.hashers import check_password, make_password
+from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from rest_framework import status
 from rest_framework import mixins, viewsets
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -19,6 +20,7 @@ from .models import (
     Category,
     Course,
     CourseVideo,
+    Enrollment,
     Instructor,
     InstructorCourseAllocation,
     Note,
@@ -26,6 +28,7 @@ from .models import (
 )
 from .permissions import (
     IsAdminOrReadOnly,
+    IsAdmin,
     IsAdminOrInstructorCourseContent,
     IsInstructor,
     IsInstructorNoteAccess,
@@ -54,7 +57,6 @@ from .utils import (
     instructor_has_course_allocation,
     is_admin_user,
     resolve_content_instructor,
-    student_is_enrolled_in_course,
 )
 
 User = get_user_model()
@@ -185,7 +187,7 @@ class HomeView(APIView):
 
 
 class CourseView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         courses = Course.objects.filter(user=request.user).select_related("category")
@@ -239,7 +241,7 @@ class CourseView(APIView):
 
 
 class CourseDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get_object(self, course_id, user):
         try:
@@ -835,14 +837,17 @@ class CourseVideoViewSet(
 ):
     permission_classes = [IsAdminOrInstructorCourseContent]
     serializer_class = CourseVideoSerializer
-    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    parser_classes = [JSONParser, FormParser]
 
-    def get_queryset(self):
-        queryset = CourseVideo.objects.select_related(
+    def get_base_queryset(self):
+        return CourseVideo.objects.select_related(
             "course",
             "course__category",
             "created_by",
         )
+
+    def get_queryset(self):
+        queryset = self.get_base_queryset()
 
         course_id = self.request.query_params.get("course_id")
         if course_id:
@@ -856,10 +861,33 @@ class CourseVideoViewSet(
         if instructor_profile is None:
             return queryset.none()
 
+        if course_id:
+            try:
+                requested_course_id = int(course_id)
+            except (TypeError, ValueError):
+                raise PermissionDenied(
+                    "You do not have permission to manage this course."
+                )
+
+            is_assigned = InstructorCourseAllocation.objects.filter(
+                instructor=instructor_profile,
+                course_id=requested_course_id,
+                allocation_status="active",
+            ).exists()
+            if not is_assigned:
+                raise PermissionDenied(
+                    "You do not have permission to manage this course."
+                )
+
         return queryset.filter(
             course__instructor_allocations__instructor=instructor_profile,
             course__instructor_allocations__allocation_status="active",
         ).distinct()
+
+    def get_object(self):
+        obj = get_object_or_404(self.get_base_queryset(), pk=self.kwargs["pk"])
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -868,29 +896,37 @@ class CourseVideoViewSet(
         serializer.save()
 
 
-class StudentCourseVideoListAPIView(APIView):
+class StudentCourseEnrollmentMixin:
     permission_classes = [IsAuthenticated, IsStudent]
 
-    def get(self, request, course_id):
+    def get_enrolled_course_or_response(self, request, course_id):
         try:
-            course = Course.objects.get(id=course_id)
-        except Course.DoesNotExist:
+            enrollment = Enrollment.objects.select_related("course").get(
+                student=request.user,
+                course_id=course_id,
+                status=True,
+            )
+        except Enrollment.DoesNotExist:
             return Response(
-                {"message": "Course Not Found"},
-                status=status.HTTP_404_NOT_FOUND,
+                {"detail": "You are not enrolled in this course."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
+        course = enrollment.course
         if not course.status:
             return Response(
                 {"message": "Course Not Found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not student_is_enrolled_in_course(request.user, course):
-            return Response(
-                {"detail": "You are not enrolled in this course."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        return course
+
+
+class StudentCourseVideoListAPIView(StudentCourseEnrollmentMixin, APIView):
+    def get(self, request, course_id):
+        course_or_response = self.get_enrolled_course_or_response(request, course_id)
+        if isinstance(course_or_response, Response):
+            return course_or_response
 
         videos = CourseVideo.objects.filter(
             course_id=course_id,
@@ -910,30 +946,49 @@ class StudentCourseVideoListAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    def post(self, request, course_id):
+        """Allow an enrolled student to post a video URL for a course."""
+        course_or_response = self.get_enrolled_course_or_response(request, course_id)
+        if isinstance(course_or_response, Response):
+            return course_or_response
 
-class StudentCourseVideoDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsStudent]
+        title = request.data.get("title")
+        video_url = request.data.get("video_url")
+        description = request.data.get("description", "")
+        order = request.data.get("order", 1)
 
-    def get(self, request, course_id, video_id):
+        if not title or not video_url:
+            return Response(
+                {"message": "Both 'title' and 'video_url' are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
-            course = Course.objects.get(id=course_id)
-        except Course.DoesNotExist:
-            return Response(
-                {"message": "Course Not Found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            order = int(order)
+        except (TypeError, ValueError):
+            order = 1
 
-        if not course.status:
-            return Response(
-                {"message": "Course Not Found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        video = CourseVideo.objects.create(
+            course_id=course_id,
+            title=title,
+            description=description,
+            video_url=video_url,
+            order=order,
+            created_by=request.user,
+        )
 
-        if not student_is_enrolled_in_course(request.user, course):
-            return Response(
-                {"detail": "You are not enrolled in this course."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        serializer = StudentCourseVideoSerializer(video, context={"request": request})
+        return Response(
+            {"message": "Video posted successfully", "data": serializer.data},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class StudentCourseVideoDetailAPIView(StudentCourseEnrollmentMixin, APIView):
+    def get(self, request, course_id, video_id):
+        course_or_response = self.get_enrolled_course_or_response(request, course_id)
+        if isinstance(course_or_response, Response):
+            return course_or_response
 
         try:
             video = CourseVideo.objects.select_related(

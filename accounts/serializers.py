@@ -1,5 +1,6 @@
 ﻿from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
 from accounts.models import (
     Accounts,
@@ -318,14 +319,10 @@ class ContentAccessValidationMixin:
 
         instructor = get_instructor_profile(request.user)
         if instructor is None:
-            raise serializers.ValidationError(
-                {'detail': 'Only instructors and admins can manage this content.'}
-            )
+            raise PermissionDenied('Only instructors and admins can manage this content.')
 
         if not instructor_has_course_allocation(instructor, course):
-            raise serializers.ValidationError(
-                {'course': 'This course is not allocated to you.'}
-            )
+            raise PermissionDenied('You do not have permission to manage this course.')
 
         if 'instructor' in getattr(self, 'fields', {}):
             attrs['instructor'] = instructor
@@ -402,7 +399,6 @@ class AssignmentSerializer(ContentAccessValidationMixin, serializers.ModelSerial
 class CourseVideoSerializer(ContentAccessValidationMixin, serializers.ModelSerializer):
     course_details = CourseSerializer(source='course', read_only=True)
     created_by_details = UserSerializer(source='created_by', read_only=True)
-    thumbnail = serializers.ImageField(required=False, allow_null=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
@@ -414,7 +410,6 @@ class CourseVideoSerializer(ContentAccessValidationMixin, serializers.ModelSeria
             'title',
             'description',
             'video_url',
-            'thumbnail',
             'order',
             'is_active',
             'created_by',
@@ -439,7 +434,6 @@ class StudentCourseVideoSerializer(serializers.ModelSerializer):
             'title',
             'description',
             'video_url',
-            'thumbnail',
             'order',
             'created_at',
         ]

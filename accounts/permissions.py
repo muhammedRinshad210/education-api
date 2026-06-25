@@ -3,6 +3,11 @@
 from accounts.utils import get_instructor_profile, instructor_has_course_allocation, is_admin_user
 
 
+class IsAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return is_admin_user(request.user)
+
+
 class IsAdminOrReadOnly(BasePermission):
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
@@ -42,6 +47,8 @@ class IsStudentAssignmentOwnerOrInstructor(BasePermission):
 
 
 class IsAdminOrInstructorCourseContent(BasePermission):
+    message = "You do not have permission to manage this course."
+
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
